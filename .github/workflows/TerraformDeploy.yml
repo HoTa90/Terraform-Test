@@ -1,0 +1,95 @@
+name: Terraform Plan and Apply
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Environment variables used by the AzureRM provider
+env:
+  ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Login to Azure via Azure CLI using the service principal JSON
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Install the latest version of the Terraform CLI
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # Initialize a new or existing Terraform working directory
+      # Creates initial files, loads any remote state, downloads providers, etc.
+      - name: Terraform Init
+        run: terraform init
+
+      # (Optional but nice) Check formatting
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      # Validate Terraform files
+      - name: Terraform Validate
+        run: terraform validate
+
+      # Generates an execution plan for Terraform
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      # Save plan to artifacts so the next job can reuse it
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: tfplan
+
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: [terraform-plan]   # This job runs only if terraform-plan succeeds
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Login to Azure again (new job = new runner)
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # Initialize Terraform (downloads providers, reads state, etc.)
+      - name: Terraform Init
+        run: terraform init
+
+      # Download saved plan from previous job
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+
+      # Terraform Apply (auto-approve the previously generated plan)
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
